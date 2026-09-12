@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.tmp
+*.bak
+*.user
+*.suo
+.vscode/
+.idea/
+.decompiled-cache/
+decompiled/
+dnSpy-net-win64 (1)/
+October 12th 2018/
+OIP (2).jpe
+user_db/accounts.json
+db/notif/notifications.json
