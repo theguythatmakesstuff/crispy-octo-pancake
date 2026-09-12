@@ -10,7 +10,8 @@ import discord
 from discord import app_commands
 from discord.ext import tasks
 
-STATUS_URL = os.getenv("FIREREC_STATUS_URL", "http://127.0.0.1:2056/")
+RENDER_URL = os.getenv("RENDER_URL", "your-render-url")
+STATUS_URL = os.getenv("FIREREC_STATUS_URL", f"https://{RENDER_URL}.onrender.com/")
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "").strip()
 APPLICATION_ID = os.getenv("DISCORD_APPLICATION_ID", "1538335335942197329").strip()
 GUILD_ID = os.getenv("DISCORD_GUILD_ID", "1538333700977205362").strip()
@@ -75,13 +76,23 @@ class FireRecStatusBot(discord.Client):
         else:
             synced = await self.tree.sync()
             print(f"Synced {len(synced)} global command(s)", flush=True)
+        self.presence_updater.start()
         if self.status_channel_id is not None:
             self.status_channel_updater.start()
 
     async def close(self) -> None:
+        if self.presence_updater.is_running():
+            self.presence_updater.cancel()
         if self.status_channel_updater.is_running():
             self.status_channel_updater.cancel()
         await super().close()
+
+    async def update_presence_once(self) -> None:
+        result = fetch_status()
+        suffix = "Online" if result.get("ok") else "Offline"
+        await self.change_presence(
+            activity=discord.Game(name=f"2018 Server Status: {suffix}")
+        )
 
     async def update_status_channel_once(self) -> bool:
         if self.status_channel_id is None:
@@ -114,6 +125,14 @@ class FireRecStatusBot(discord.Client):
 
     @status_channel_updater.before_loop
     async def before_status_channel_updater(self) -> None:
+        await self.wait_until_ready()
+
+    @tasks.loop(seconds=20)
+    async def presence_updater(self) -> None:
+        await self.update_presence_once()
+
+    @presence_updater.before_loop
+    async def before_presence_updater(self) -> None:
         await self.wait_until_ready()
 
 
