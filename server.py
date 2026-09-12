@@ -2696,6 +2696,11 @@ async def dashboard_accounts() -> list[dict[str, Any]]:
     return [public_account(account) for account in load_accounts()]
 
 
+@app.get("/api/accounts")
+async def public_dashboard_accounts() -> list[dict[str, Any]]:
+    return await dashboard_accounts()
+
+
 @dashboard_app.post("/api/accounts")
 async def dashboard_create_account(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     username = str(payload.get("username", "")).strip()
@@ -2711,6 +2716,11 @@ async def dashboard_create_account(payload: dict[str, Any] = Body(default={})) -
     return public_account(account)
 
 
+@app.post("/api/accounts")
+async def public_dashboard_create_account(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    return await dashboard_create_account(payload)
+
+
 @dashboard_app.patch("/api/accounts/{account_id}")
 async def dashboard_update_account(account_id: int, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     updates: dict[str, Any] = {}
@@ -2718,6 +2728,11 @@ async def dashboard_update_account(account_id: int, payload: dict[str, Any] = Bo
         if key in payload:
             updates[key] = payload[key]
     return public_account(update_account_profile(account_id, updates))
+
+
+@app.patch("/api/accounts/{account_id}")
+async def public_dashboard_update_account(account_id: int, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    return await dashboard_update_account(account_id, payload)
 
 
 @dashboard_app.post("/api/accounts/{account_id}/avatar-items")
@@ -2729,9 +2744,19 @@ async def dashboard_toggle_avatar_item(account_id: int, payload: dict[str, Any] 
     return public_account(set_account_avatar_item_hidden(account_id, avatar_item_desc, hidden))
 
 
+@app.post("/api/accounts/{account_id}/avatar-items")
+async def public_dashboard_toggle_avatar_item(account_id: int, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    return await dashboard_toggle_avatar_item(account_id, payload)
+
+
 @dashboard_app.post("/api/accounts/{account_id}/ban")
 async def dashboard_ban_account(account_id: int) -> dict[str, Any]:
     return public_account(set_account_banned(account_id, True))
+
+
+@app.post("/api/accounts/{account_id}/ban")
+async def public_dashboard_ban_account(account_id: int) -> dict[str, Any]:
+    return await dashboard_ban_account(account_id)
 
 
 @dashboard_app.post("/api/accounts/{account_id}/unban")
@@ -2739,10 +2764,20 @@ async def dashboard_unban_account(account_id: int) -> dict[str, Any]:
     return public_account(set_account_banned(account_id, False))
 
 
+@app.post("/api/accounts/{account_id}/unban")
+async def public_dashboard_unban_account(account_id: int) -> dict[str, Any]:
+    return await dashboard_unban_account(account_id)
+
+
 @dashboard_app.delete("/api/accounts/{account_id}")
 async def dashboard_delete_account(account_id: int) -> dict[str, Any]:
     delete_account(account_id)
     return {"deleted": True, "id": account_id}
+
+
+@app.delete("/api/accounts/{account_id}")
+async def public_dashboard_delete_account(account_id: int) -> dict[str, Any]:
+    return await dashboard_delete_account(account_id)
 
 
 @api_app.post("/api/PlayersBanned/v2/ban")
@@ -3023,6 +3058,9 @@ async def serve(app: FastAPI, port: int) -> None:
 
 app.mount("/", api_app)
 app.mount("/", ws_app)
+app.mount("/", image_app)
+app.mount("/", dashboard_app)
+app.mount("/", recnet_app)
 
 
 async def main() -> None:
