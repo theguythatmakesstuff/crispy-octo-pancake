@@ -1141,6 +1141,16 @@ async def nameserver_v2() -> dict[str, str]:
     return await nameserver_root()
 
 
+@app.get("/ns")
+async def public_nameserver_root() -> dict[str, str]:
+    return await nameserver_root()
+
+
+@app.get("/ns/")
+async def public_nameserver_root_slash() -> dict[str, str]:
+    return await nameserver_root()
+
+
 @api_app.get("/")
 async def api_root() -> dict[str, str]:
     payload = {"service": "Rec Room 2018 Server", "status": "Ready"}
@@ -3011,12 +3021,8 @@ async def serve(app: FastAPI, port: int) -> None:
     await server.serve()
 
 
-app.mount("/ns", name_server_app)
-app.mount("/dashboard", dashboard_app)
-app.mount("/recnet", recnet_app)
-app.mount("/img", image_app)
-app.mount("/ws", ws_app)
 app.mount("/", api_app)
+app.mount("/", ws_app)
 
 
 async def main() -> None:
