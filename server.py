@@ -1237,6 +1237,29 @@ async def config_v2_api_alias() -> dict[str, Any]:
     return await config_v2()
 
 
+@app.get("/api/dbsync")
+async def dbsync_export() -> dict[str, Any]:
+    payload = {
+        "accounts": load_accounts(),
+        "rooms": load_rooms(),
+    }
+    log_api_response({"accounts": len(payload["accounts"]), "rooms": len(payload["rooms"])})
+    return payload
+
+
+@app.post("/api/dbsync")
+async def dbsync_import(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    accounts = payload.get("accounts")
+    rooms = payload.get("rooms")
+    if not isinstance(accounts, list) or not isinstance(rooms, list):
+        raise HTTPException(status_code=422, detail="accounts and rooms must both be lists")
+    save_accounts(accounts)
+    save_rooms(rooms)
+    response = {"ok": True, "accounts": len(accounts), "rooms": len(rooms)}
+    log_api_response(response)
+    return response
+
+
 @api_app.get("/api/config/v2/")
 async def config_v2_api_alias_slash() -> dict[str, Any]:
     return await config_v2()
