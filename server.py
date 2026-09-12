@@ -40,7 +40,7 @@ HUB_SUPPORTED_TRANSPORTS: list[dict[str, Any]] = [
     {"transport": "WebSockets", "transferFormats": ["Text", "Binary"]}
 ]
 HUB_NEGOTIATE_VERSION = 0
-HUB_URL = "http://localhost:2018/"
+HUB_URL = f"ws://{RENDER_URL}.onrender.com/hub/v1"
 LATE_WS_PORT = 20161
 
 
@@ -1119,7 +1119,7 @@ async def log_requests(request: Request, call_next):
 async def nameserver_root() -> dict[str, str]:
     payload = {
         "API": f"https://{RENDER_URL}.onrender.com",
-        "Notifications": f"wss://{RENDER_URL}.onrender.com/hub/v1",
+        "Notifications": f"ws://{RENDER_URL}.onrender.com/hub/v1",
         "Images": f"https://{RENDER_URL}.onrender.com",
     }
     log_api_response(payload)
@@ -3094,7 +3094,7 @@ async def main() -> None:
     log_line("[DiscordPresence.cs] has started.")
     log_line("Please start up the build you want now.")
     log_line("[DiscordPresence.cs] successfully updated activity!")
-    log_line(f'NameServer Response: {{"API":"https://{RENDER_URL}.onrender.com","Notifications":"wss://{RENDER_URL}.onrender.com/hub/v1","Images":"https://{RENDER_URL}.onrender.com"}}')
+    log_line(f'NameServer Response: {{"API":"https://{RENDER_URL}.onrender.com","Notifications":"ws://{RENDER_URL}.onrender.com/hub/v1","Images":"https://{RENDER_URL}.onrender.com"}}')
     log_line("[ImageServer.cs] has started.")
     log_line("[WebSocket.cs] has started and is listening.")
     log_line("[ImageServer.cs] is listening.")
