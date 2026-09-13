@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import io
 import json
@@ -40,8 +41,82 @@ HUB_SUPPORTED_TRANSPORTS: list[dict[str, Any]] = [
     {"transport": "WebSockets", "transferFormats": ["Text", "Binary"]}
 ]
 HUB_NEGOTIATE_VERSION = 0
-HUB_URL = f"ws://{RENDER_URL}.onrender.com/hub/v1"
 LATE_WS_PORT = 20161
+
+
+def env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+LOCALHOST_MODE = env_flag("FIREREC_LOCALHOST_MODE", False)
+LOCALHOST_TARGET_HOST = os.getenv("FIREREC_LOCALHOST_TARGET_HOST", "localhost")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="FireRec 2018 Server")
+    parser.add_argument(
+        "--mode",
+        choices=["localhost", "upstream"],
+        help="Public endpoint mode. Overrides FIREREC_LOCALHOST_MODE when provided.",
+    )
+    parser.add_argument(
+        "--localhost-target-host",
+        dest="localhost_target_host",
+        help="Host used for localhost mode URLs. Overrides FIREREC_LOCALHOST_TARGET_HOST.",
+    )
+    return parser.parse_args()
+
+
+def build_public_http_base() -> str:
+    if LOCALHOST_MODE:
+        return f"http://{LOCALHOST_TARGET_HOST}:{API_PORT}"
+    return f"https://{RENDER_URL}.onrender.com"
+
+
+def build_public_ws_hub_url() -> str:
+    if LOCALHOST_MODE:
+        return f"ws://{LOCALHOST_TARGET_HOST}:{WS_PORT}/hub/v1"
+    return f"ws://{RENDER_URL}.onrender.com/hub/v1"
+
+
+def build_nameserver_payload() -> dict[str, str]:
+    if LOCALHOST_MODE:
+        return {
+            "API": f"http://{LOCALHOST_TARGET_HOST}:{API_PORT}",
+            "Notifications": f"ws://{LOCALHOST_TARGET_HOST}:{WS_PORT}",
+            "Images": f"http://{LOCALHOST_TARGET_HOST}:{IMAGE_PORT}",
+        }
+    public_base = build_public_http_base()
+    return {
+        "API": public_base,
+        "Notifications": build_public_ws_hub_url(),
+        "Images": public_base,
+    }
+
+
+def normalize_localhost_ports() -> None:
+    global NAME_SERVER_PORT
+    global API_PORT
+    global WS_PORT
+    global IMAGE_PORT
+
+    if "FIREREC_NAME_SERVER_PORT" not in os.environ:
+        NAME_SERVER_PORT = 2059
+    if "FIREREC_API_PORT" not in os.environ:
+        API_PORT = 2056
+    if "FIREREC_WS_PORT" not in os.environ:
+        WS_PORT = 2057
+    if "FIREREC_IMAGE_PORT" not in os.environ:
+        IMAGE_PORT = 2058
+
+
+def build_cdn_base_uri() -> str:
+    if LOCALHOST_MODE:
+        return f"http://{LOCALHOST_TARGET_HOST}:{IMAGE_PORT}/"
+    return f"{build_public_http_base().rstrip('/')}/"
 
 
 def log_line(message: str) -> None:
@@ -88,7 +163,7 @@ def hub_handshake(path: str) -> dict[str, Any]:
         "accessToken": HUB_ACCESS_TOKEN,
         "supportedTransports": HUB_SUPPORTED_TRANSPORTS,
         "negotiateVersion": HUB_NEGOTIATE_VERSION,
-        "url": HUB_URL,
+        "url": build_public_ws_hub_url(),
     }
 
 
@@ -1117,11 +1192,7 @@ async def log_requests(request: Request, call_next):
 
 @name_server_app.get("/")
 async def nameserver_root() -> dict[str, str]:
-    payload = {
-        "API": f"https://{RENDER_URL}.onrender.com",
-        "Notifications": f"ws://{RENDER_URL}.onrender.com/hub/v1",
-        "Images": f"https://{RENDER_URL}.onrender.com",
-    }
+    payload = build_nameserver_payload()
     log_api_response(payload)
     return payload
 
@@ -1228,6 +1299,7 @@ async def set_server_maintenance_api_alias(payload: dict[str, Any] = Body(defaul
 @api_app.get("/config/v2")
 async def config_v2() -> dict[str, Any]:
     CONFIG_V2["ServerMaintenance"] = {"StartsInMinutes": maintenance_starts_in_minutes()}
+    CONFIG_V2["CdnBaseUri"] = build_cdn_base_uri()
     log_api_response(CONFIG_V2)
     return CONFIG_V2
 
@@ -2673,6 +2745,10 @@ async def websocket_notifications(websocket: WebSocket):
         notification_clients.discard(websocket)
         log_websocket_event("/api/notification/v2", "disconnected")
         return
+    except Exception as exc:
+        notification_clients.discard(websocket)
+        log_websocket_event("/api/notification/v2", "error", {"error": str(exc)})
+        return
 
 
 @dashboard_app.get("/")
@@ -2871,6 +2947,13 @@ async def websocket_presence_heartbeat(websocket: WebSocket):
     except WebSocketDisconnect:
         log_websocket_event("/api/presence/v3/heartbeatwebsocket", "disconnected")
         return
+    except Exception as exc:
+        log_websocket_event(
+            "/api/presence/v3/heartbeatwebsocket",
+            "error",
+            {"error": str(exc)},
+        )
+        return
 
 
 @api_app.api_route("/hub/v1/negotiate", methods=["GET", "POST"])
@@ -2885,6 +2968,16 @@ async def hub_v1_negotiate(request: Request) -> dict[str, Any]:
 
 @api_app.api_route("/api/hub/v1/negotiate", methods=["GET", "POST"])
 async def hub_v1_negotiate_api_alias(request: Request) -> dict[str, Any]:
+    return await hub_v1_negotiate(request)
+
+
+@api_app.api_route("/hub/v1/negotiate/", methods=["GET", "POST"])
+async def hub_v1_negotiate_slash(request: Request) -> dict[str, Any]:
+    return await hub_v1_negotiate(request)
+
+
+@api_app.api_route("/api/hub/v1/negotiate/", methods=["GET", "POST"])
+async def hub_v1_negotiate_api_alias_slash(request: Request) -> dict[str, Any]:
     return await hub_v1_negotiate(request)
 
 
@@ -3015,10 +3108,27 @@ async def websocket_hub_v1(websocket: WebSocket):
                     await send_blank_ws_json(websocket)
     except WebSocketDisconnect:
         log_websocket_event("/hub/v1", "disconnected")
+    except Exception as exc:
+        log_websocket_event("/hub/v1", "error", {"error": str(exc)})
     finally:
         hub_clients.discard(websocket)
         if account_id is not None:
             unregister_websocket_connection(account_id, websocket)
+
+
+@ws_app.websocket("/hub/v1/")
+async def websocket_hub_v1_slash(websocket: WebSocket):
+    await websocket_hub_v1(websocket)
+
+
+@ws_app.websocket("/api/hub/v1")
+async def websocket_hub_v1_api_alias(websocket: WebSocket):
+    await websocket_hub_v1(websocket)
+
+
+@ws_app.websocket("/api/hub/v1/")
+async def websocket_hub_v1_api_alias_slash(websocket: WebSocket):
+    await websocket_hub_v1(websocket)
 
 
 @ws_app.websocket("/{path:path}")
@@ -3041,6 +3151,9 @@ async def websocket_any(websocket: WebSocket, path: str):
                 await send_blank_ws_json(websocket)
     except WebSocketDisconnect:
         log_websocket_event(f"/{path}", "disconnected")
+    except Exception as exc:
+        log_websocket_event(f"/{path}", "error", {"error": str(exc)})
+        return
         return
 
 
@@ -3073,6 +3186,15 @@ async def get_image(image_path: str) -> Response:
     return PlainTextResponse("Image not found on img.rec.net.", status_code=404)
 
 
+@app.get("/{image_path:path}")
+async def public_get_image(image_path: str, request: Request) -> Response:
+    normalized = image_path.lstrip("/")
+    named_image_aliases = {item["FriendlyImageName"] for item in named_images_payload() if item.get("FriendlyImageName")}
+    if normalized in IMAGE_NAMES or normalized in named_image_aliases or normalized.startswith("room/"):
+        return await get_image(image_path)
+    return await fallback_api(image_path, request)
+
+
 async def serve(app: FastAPI, port: int) -> None:
     config = uvicorn.Config(app, host=HOST, port=port, log_level="warning")
     server = uvicorn.Server(config)
@@ -3087,6 +3209,20 @@ app.mount("/", recnet_app)
 
 
 async def main() -> None:
+    args = parse_args()
+    global LOCALHOST_MODE
+    global LOCALHOST_TARGET_HOST
+
+    if args.mode is not None:
+        LOCALHOST_MODE = args.mode == "localhost"
+    if args.localhost_target_host is not None:
+        LOCALHOST_TARGET_HOST = args.localhost_target_host
+
+    if LOCALHOST_MODE:
+        normalize_localhost_ports()
+
+    CONFIG_V2["CdnBaseUri"] = build_cdn_base_uri()
+
     log_line("[NameServer.cs] has started.")
     log_line("[APIServer.cs] has started.")
     log_line("[NameServer.cs] is listening.")
@@ -3094,13 +3230,27 @@ async def main() -> None:
     log_line("[DiscordPresence.cs] has started.")
     log_line("Please start up the build you want now.")
     log_line("[DiscordPresence.cs] successfully updated activity!")
-    log_line(f'NameServer Response: {{"API":"https://{RENDER_URL}.onrender.com","Notifications":"ws://{RENDER_URL}.onrender.com/hub/v1","Images":"https://{RENDER_URL}.onrender.com"}}')
+    nameserver_payload = build_nameserver_payload()
+    log_line(f"[ServerMode.cs] mode is {'localhost' if LOCALHOST_MODE else 'upstream'}.")
+    log_line(f"NameServer Response: {json.dumps(nameserver_payload, separators=(',', ':'))}")
     log_line("[ImageServer.cs] has started.")
     log_line("[WebSocket.cs] has started and is listening.")
     log_line("[ImageServer.cs] is listening.")
-    log_line(f"[NotifDashboard.cs] is listening on https://{RENDER_URL}.onrender.com/dashboard/")
-    log_line(f"[RecNet.cs] is listening on https://{RENDER_URL}.onrender.com/recnet/")
-    await serve(app, API_PORT)
+    log_line(f"[NotifDashboard.cs] is listening on {build_public_http_base().rstrip('/')}/dashboard/")
+    log_line(f"[RecNet.cs] is listening on {build_public_http_base().rstrip('/')}/recnet/")
+    if LOCALHOST_MODE:
+        log_line(f"[NameServer.cs] localhost endpoint: http://{LOCALHOST_TARGET_HOST}:{NAME_SERVER_PORT}")
+        log_line(f"[APIServer.cs] localhost endpoint: http://{LOCALHOST_TARGET_HOST}:{API_PORT}")
+        log_line(f"[WebSocket.cs] localhost endpoint: ws://{LOCALHOST_TARGET_HOST}:{WS_PORT}")
+        log_line(f"[ImageServer.cs] localhost endpoint: http://{LOCALHOST_TARGET_HOST}:{IMAGE_PORT}")
+        await asyncio.gather(
+            serve(name_server_app, NAME_SERVER_PORT),
+            serve(app, API_PORT),
+            serve(app, WS_PORT),
+            serve(app, IMAGE_PORT),
+        )
+    else:
+        await serve(app, API_PORT)
 
 
 ensure_seed_room_save_data()
